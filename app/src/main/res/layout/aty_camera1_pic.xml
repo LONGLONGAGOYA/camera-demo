@@ -6,12 +6,21 @@
         android:orientation="vertical">
 
 
-    <com.example.camera.ui.Previewcontext
+    <com.example.camera.ui.Preview
             android:id="@+id/preview"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             app:layout_constraintLeft_toLeftOf="parent"
             app:layout_constraintTop_toTopOf="parent" />
+
+    <com.example.camera.ui.ShowView
+            android:id="@+id/showView"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            app:layout_constraintBottom_toBottomOf="@id/preview"
+            app:layout_constraintLeft_toLeftOf="@id/preview"
+            app:layout_constraintRight_toRightOf="@id/preview"
+            app:layout_constraintTop_toTopOf="@id/preview" />
 
     <Button
             android:id="@+id/btnPicture"

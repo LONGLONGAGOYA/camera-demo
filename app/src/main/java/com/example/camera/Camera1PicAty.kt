@@ -1,20 +1,20 @@
 package com.example.camera
 
 import android.app.Activity
+import android.graphics.Rect
 import android.hardware.Camera
 import android.media.MediaRecorder
 import android.os.Bundle
 import android.os.Environment
 import android.util.Log
 import android.widget.Toast
+import com.example.camera.ui.FocusAreaChangeListener
 import kotlinx.android.synthetic.main.aty_camera1_pic.*
 import java.io.File
 import java.io.IOException
 import kotlin.math.abs
 
 const val TAG = "CameraPicAty"
-const val MODE_PICTURE = 0
-const val MODE_VIDEO = 1
 
 class Camera1PicAty : Activity() {
     var mCamera: Camera? = null
@@ -22,7 +22,6 @@ class Camera1PicAty : Activity() {
     var mCameraNeedOrientation: Int? = null
     var mMediaRecorder: MediaRecorder? = null
 
-    var mMode = MODE_PICTURE
     var mIsReocrding = false
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -39,6 +38,35 @@ class Camera1PicAty : Activity() {
         btnPicture.setOnLongClickListener {
             recordVideo()
             true
+        }
+
+        preview.onFocusAreaChangeListener = object : FocusAreaChangeListener {
+            override fun onAreaChange(area: Camera.Area) {
+                //set param
+                mCamera?.let {
+                    val p = it.parameters
+                    if (p.maxNumFocusAreas == 0) {
+                        return
+                    }
+                    val areas = p.focusAreas ?: mutableListOf()
+                    areas.clear()
+                    areas.add(area)
+                    p.focusAreas = areas
+                    it.stopPreview()
+                    try {
+                        it.parameters = p
+                        Toast.makeText(this@Camera1PicAty, "change success ", Toast.LENGTH_SHORT)
+                            .show()
+                    } catch (e: java.lang.Exception) {
+                        Toast.makeText(this@Camera1PicAty, "change error", Toast.LENGTH_SHORT)
+                            .show()
+                    }
+                    it.startPreview()
+                    //show ui
+                    showView.setFocusArea(area.rect)
+                }
+
+            }
         }
     }
 
@@ -135,12 +163,16 @@ class Camera1PicAty : Activity() {
         mMediaRecorder = null
     }
 
-
     override fun onResume() {
         super.onResume()
         mCameraId?.let { that ->
             safeOpenCamera(that)
             mCamera?.let {
+                configMeterArea()
+                configFocusArea()
+                it.autoFocus { success, camera ->
+                    Log.d(TAG, "success:$success   auto focus")
+                }
                 preview.setCamera(it)
             }
         }
@@ -187,5 +219,43 @@ class Camera1PicAty : Activity() {
         preview.stopPreviewAndFreeCamera()
     }
 
+    //config manual focus
+    private fun configMeterArea() {
+        mCamera?.let {
+            val param = it.parameters
+            val maxNum = param.maxNumMeteringAreas
+            if (maxNum > 0) {
+                param.meteringAreas.apply {
+                    val r1 = Rect(-1000, -1000, -500, -500)
+                    add(Camera.Area(r1, 60))
+                    param.meteringAreas = this
+                }
+                it.parameters = param
+            }
+        }
 
+
+    }
+
+    private fun configFocusArea() {
+        mCamera?.let {
+            val param = it.parameters
+            val maxNum = param.maxNumFocusAreas
+            Log.d(
+                TAG, "configMeterArea maxFocus:${param.maxNumFocusAreas}" +
+                        "    maxMeterArea:${param.maxNumMeteringAreas}" +
+                        "    maxDetectedFace:${param.maxNumDetectedFaces}"
+            )
+            if (maxNum > 0) {
+                param.focusAreas.apply {
+                    val r1 = Rect(-1000, -1000, -500, -500)
+                    val areas = mutableListOf<Camera.Area>()
+                    areas.add(Camera.Area(r1, 1000))
+                    Log.d(TAG, "focusArea:${this}")
+                    param.focusAreas = areas
+                }
+                it.parameters = param
+            }
+        }
+    }
 }
