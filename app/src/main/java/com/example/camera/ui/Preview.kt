@@ -9,6 +9,7 @@ import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import com.example.camera.Camera2PicAty.Companion.TAG
+import com.example.camera.util.FaceHelper
 
 class Preview @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
@@ -122,7 +123,18 @@ class Preview @JvmOverloads constructor(
             val focusRect = Rect()
 
             Log.d(TAG, "onTouchEvent  focusRect:${focusAreaRect}")
-            onFocusAreaChangeListener?.onAreaChange(Camera.Area(focusAreaRect, 900))
+            val hepler = FaceHelper(
+                90, 0, Rect(
+                    -1000, -1000, 1000, 1000
+                ), Rect(0, 0, measuredWidth, measuredHeight)
+            )
+            onFocusAreaChangeListener?.onAreaChange(
+                Camera.Area(
+                    hepler.reverseFaceCoordinate(
+                        focusAreaRect!!
+                    ), 900
+                )
+            )
         }
         return super.onTouchEvent(event)
     }

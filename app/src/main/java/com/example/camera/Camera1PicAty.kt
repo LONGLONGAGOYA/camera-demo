@@ -66,7 +66,7 @@ class Camera1PicAty : Activity() {
                     }
                     it.startPreview()
                     //show ui
-                    showView.setFocusArea(area.rect)
+                    showView.setFocusArea(mFaceHelper!!.convertFaceCoordinate(area.rect))
                 }
 
             }

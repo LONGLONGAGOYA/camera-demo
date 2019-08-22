@@ -13,33 +13,40 @@ class FaceHelper(
     val previewSize: Rect
 ) {
     private var mMatrix: Matrix? = null
+    private var mReverseMatrix: Matrix? = null
 
     init {
         mMatrix = Matrix()
+        mReverseMatrix = Matrix()
         mMatrix?.let {
-            Log.d(TAG, "FaceUtil   1 matrix:${mMatrix.toString()}")
             //rotate should change by sensorOrientation and currentOrientation
             it.postRotate(sensorOrientation.toFloat())
-            Log.d(TAG, "FaceUtil   2 matrix:${mMatrix.toString()}")
+            mReverseMatrix!!.preRotate(-sensorOrientation.toFloat())
+            //translate
             it.postTranslate(1000f, 1000f)
+            mReverseMatrix!!.preTranslate(-1000f, -1000f)
+            //scale
             //swapDimension's value should change by sensorOrientation and currentOrientation
             val swapDimension = true
             if (swapDimension) {
-                Log.d(TAG, "FaceUtil $this")
-                Log.d(TAG, "FaceUtil  3 sx:${previewSize.width() / activeArraySize.height()}")
-                Log.d(TAG, "FaceUtil  3 sy:${previewSize.height() / activeArraySize.width()}")
                 it.postScale(
                     (previewSize.width().toFloat() / activeArraySize.height()),
                     (previewSize.height().toFloat() / activeArraySize.width())
+                )
+                mReverseMatrix!!.preScale(
+                    activeArraySize.height().toFloat() / previewSize.width(),
+                    activeArraySize.width().toFloat() / previewSize.height()
                 )
             } else {
                 it.postScale(
                     (previewSize.width() / activeArraySize.width()).toFloat(),
                     (previewSize.height() / activeArraySize.height()).toFloat()
                 )
+                mReverseMatrix!!.preScale(
+                    activeArraySize.width().toFloat() / previewSize.width(),
+                    activeArraySize.height().toFloat() / previewSize.height()
+                )
             }
-            Log.d(TAG, "FaceUtil   3 matrix:${mMatrix.toString()}")
-
             test()
         }
     }
@@ -53,11 +60,23 @@ class FaceHelper(
         Log.d(TAG, "FaceUtil r2->${r2.apply { mMatrix!!.mapRect(this) }}")
         Log.d(TAG, "FaceUtil r3->${r3.apply { mMatrix!!.mapRect(this) }}")
         Log.d(TAG, "FaceUtil r4->${r4.apply { mMatrix!!.mapRect(this) }}")
+
+        Log.d(TAG, "FaceUtil r1->${r1.apply { mReverseMatrix!!.mapRect(this) }}")
+        Log.d(TAG, "FaceUtil r2->${r2.apply { mReverseMatrix!!.mapRect(this) }}")
+        Log.d(TAG, "FaceUtil r3->${r3.apply { mReverseMatrix!!.mapRect(this) }}")
+        Log.d(TAG, "FaceUtil r4->${r4.apply { mReverseMatrix!!.mapRect(this) }}")
     }
 
     fun convertFaceCoordinate(rawRect: Rect): Rect {
         val rf = RectF(rawRect)
         val ret = mMatrix!!.mapRect(rf)
+        Log.d(TAG, "FaceHelper:$this   rawRect:${rawRect.toString()}   retRect:${rf}")
+        return Rect(rf.left.toInt(), rf.top.toInt(), rf.right.toInt(), rf.bottom.toInt())
+    }
+
+    fun reverseFaceCoordinate(rawRect: Rect): Rect {
+        val rf = RectF(rawRect)
+        val ret = mReverseMatrix!!.mapRect(rf)
         Log.d(TAG, "FaceHelper:$this   rawRect:${rawRect.toString()}   retRect:${rf}")
         return Rect(rf.left.toInt(), rf.top.toInt(), rf.right.toInt(), rf.bottom.toInt())
     }
