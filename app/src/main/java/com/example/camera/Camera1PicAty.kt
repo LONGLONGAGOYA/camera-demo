@@ -171,11 +171,14 @@ class Camera1PicAty : Activity() {
         mCameraId?.let { that ->
             safeOpenCamera(that)
             mCamera?.let {
+                mCamera?.stopFaceDetection()
+                mCamera?.stopPreview()
                 configMeterArea()
                 configFocusArea()
                 preview.setCamera(it)
                 preview.onReady = object : OnReady {
                     override fun onDidStartPreview() {
+                        mCamera?.autoFocus(null)
                         configFaceDet()
                     }
                 }
