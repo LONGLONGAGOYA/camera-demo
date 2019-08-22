@@ -9,6 +9,8 @@ import android.os.Environment
 import android.util.Log
 import android.widget.Toast
 import com.example.camera.ui.FocusAreaChangeListener
+import com.example.camera.ui.OnReady
+import com.example.camera.util.FaceHelper
 import kotlinx.android.synthetic.main.aty_camera1_pic.*
 import java.io.File
 import java.io.IOException
@@ -21,15 +23,16 @@ class Camera1PicAty : Activity() {
     var mCameraId: Int? = null
     var mCameraNeedOrientation: Int? = null
     var mMediaRecorder: MediaRecorder? = null
+    var mFaceHelper: FaceHelper? = null
 
-    var mIsReocrding = false
+    private var mIsRecording = false
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.aty_camera1_pic)
 
         mCameraId = findDesiredCameraId()
         btnPicture.setOnClickListener {
-            if (mIsReocrding) {
+            if (mIsRecording) {
                 stopRecord()
             } else {
                 takePicture()
@@ -94,14 +97,14 @@ class Camera1PicAty : Activity() {
         if (prepareVideoRecorder()) {
             mMediaRecorder?.start()
             btnPicture.text = "stop"
-            mIsReocrding = true
+            mIsRecording = true
         }
     }
 
     private fun stopRecord() {
         releaseMediaRecorder()
         btnPicture.text = "拍照(长按拍摄)"
-        mIsReocrding = false
+        mIsRecording = false
     }
 
     private fun prepareVideoRecorder(): Boolean {
@@ -170,13 +173,16 @@ class Camera1PicAty : Activity() {
             mCamera?.let {
                 configMeterArea()
                 configFocusArea()
-                it.autoFocus { success, camera ->
-                    Log.d(TAG, "success:$success   auto focus")
-                }
                 preview.setCamera(it)
+                preview.onReady = object : OnReady {
+                    override fun onDidStartPreview() {
+                        configFaceDet()
+                    }
+                }
             }
         }
     }
+
 
     override fun onPause() {
         super.onPause()
@@ -241,11 +247,6 @@ class Camera1PicAty : Activity() {
         mCamera?.let {
             val param = it.parameters
             val maxNum = param.maxNumFocusAreas
-            Log.d(
-                TAG, "configMeterArea maxFocus:${param.maxNumFocusAreas}" +
-                        "    maxMeterArea:${param.maxNumMeteringAreas}" +
-                        "    maxDetectedFace:${param.maxNumDetectedFaces}"
-            )
             if (maxNum > 0) {
                 param.focusAreas.apply {
                     val r1 = Rect(-1000, -1000, -500, -500)
@@ -255,6 +256,33 @@ class Camera1PicAty : Activity() {
                     param.focusAreas = areas
                 }
                 it.parameters = param
+            }
+        }
+    }
+
+
+    private fun configFaceDet() {
+        mCamera?.let {
+            val param = it.parameters
+            val maxNum = param.maxNumDetectedFaces
+            Log.d(
+                TAG, "configMeterArea maxFocus:${param.maxNumFocusAreas}" +
+                        "    maxMeterArea:${param.maxNumMeteringAreas}" +
+                        "    maxDetectedFace:${param.maxNumDetectedFaces}"
+            )
+            if (maxNum > 0) {
+                mFaceHelper = FaceHelper(
+                    mCameraNeedOrientation ?: 0,
+                    windowManager.defaultDisplay.rotation,
+                    Rect(-1000, -1000, 1000, 1000),
+                    Rect(0, 0, preview.measuredWidth, preview.measuredHeight)
+                )
+                it.setFaceDetectionListener { faces, camera ->
+                    showView.setFaceAreas(faces.map { face ->
+                        mFaceHelper!!.convertFaceCoordinate(face.rect)
+                    })
+                }
+                mCamera?.startFaceDetection()
             }
         }
     }

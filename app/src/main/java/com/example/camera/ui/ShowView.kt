@@ -19,31 +19,36 @@ class ShowView @JvmOverloads constructor(
         style = Paint.Style.STROKE
         strokeWidth = 9f
     }
+    private val facePaint = Paint().apply {
+        color = Color.RED
+        style = Paint.Style.STROKE
+        strokeWidth = 9f
+    }
 
     private val mFocusRect = Rect()
+    private var mFacesRects: List<Rect>? = null
 
     fun setFocusArea(focusRect: Rect) {
         mFocusRect.set(focusRect)
         postInvalidate()
     }
 
-    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
-        Log.d(TAG, "ShowView  do onMeasure in ShowView")
-
-    }
-
-    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
-        super.onLayout(changed, left, top, right, bottom)
-        Log.d(TAG, "ShowView  do Layout in ShowView")
-    }
-
     override fun onDraw(canvas: Canvas?) {
         super.onDraw(canvas)
-        Log.d(TAG, "do onDraw in ShowView focusRect:$mFocusRect")
         canvas?.let {
             it.drawRect(mFocusRect, focusPaint)
+            mFacesRects?.forEach { rect ->
+                it.drawRect(rect, facePaint)
+            }
         }
+    }
+
+    fun setFaceAreas(map: List<Rect>) {
+        if (map == mFacesRects) {
+            return
+        }
+        mFacesRects = map
+        postInvalidate()
     }
 
 

@@ -19,6 +19,9 @@ class Preview @JvmOverloads constructor(
     var mCamera: Camera? = null
     var mSupportPreviewSizes: List<Camera.Size>? = null
     var mPreviewSize: Camera.Size? = null
+    var onReady: OnReady? = null
+    var onFocusAreaChangeListener: FocusAreaChangeListener? = null
+    var focusAreaRect: Rect? = null
 
     init {
         holder.addCallback(this)
@@ -53,6 +56,7 @@ class Preview @JvmOverloads constructor(
                 }
                 setPreviewDisplay(holder)
                 startPreview()
+                onReady?.onDidStartPreview()
             } catch (e: Exception) {
                 Log.d(TAG, "Error starting camera preview: ${e.message}")
             }
@@ -68,6 +72,7 @@ class Preview @JvmOverloads constructor(
             try {
                 setPreviewDisplay(holder)
                 startPreview()
+                onReady?.onDidStartPreview()
             } catch (e: Exception) {
 
             }
@@ -82,7 +87,10 @@ class Preview @JvmOverloads constructor(
             requestLayout()
 
             setPreviewDisplay(holder)
-            startPreview()
+            if (holder.surface.isValid) {
+                startPreview()
+                onReady?.onDidStartPreview()
+            }
         }
     }
 
@@ -101,10 +109,6 @@ class Preview @JvmOverloads constructor(
         }
     }
 
-
-    var onFocusAreaChangeListener: FocusAreaChangeListener? = null
-    var focusAreaRect: Rect? = null
-
     override fun onTouchEvent(event: MotionEvent?): Boolean {
         Log.d(TAG, "onTouchEvent : ${focusAreaRect}")
         event?.let {
@@ -117,7 +121,7 @@ class Preview @JvmOverloads constructor(
             )
             val focusRect = Rect()
 
-            Log.d(TAG,"onTouchEvent  focusRect:${focusAreaRect}")
+            Log.d(TAG, "onTouchEvent  focusRect:${focusAreaRect}")
             onFocusAreaChangeListener?.onAreaChange(Camera.Area(focusAreaRect, 900))
         }
         return super.onTouchEvent(event)
@@ -131,4 +135,8 @@ interface FocusAreaChangeListener {
      */
     fun onAreaChange(area: Camera.Area)
 
+}
+
+interface OnReady {
+    fun onDidStartPreview()
 }
