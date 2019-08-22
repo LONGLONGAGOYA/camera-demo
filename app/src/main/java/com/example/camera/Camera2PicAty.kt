@@ -21,11 +21,12 @@ import kotlin.math.max
 import kotlin.math.sign
 
 
-class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
+class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
     companion object {
-        const val TAG = "MainActivity"
+        const val TAG = "Camera2PicAty"
         private const val STATE_IDLE = 0
         private const val STATE_WAITING_LOCK = 1
+        private const val STATE_WAITING_AE_DONE = 2
     }
 
     private lateinit var mCameraManager: CameraManager
@@ -42,7 +43,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
             partialResult: CaptureResult
         ) {
             super.onCaptureProgressed(session, request, partialResult)
-            process(partialResult)
+//            process(partialResult)
         }
 
         override fun onCaptureCompleted(
@@ -59,7 +60,10 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
             val aeState = result.get(CaptureResult.CONTROL_AE_STATE)
             val awbState = result.get(CaptureResult.CONTROL_AWB_STATE)
             Log.d(TAG, "process AF_STATE:$afState  AE_STATE:$aeState  AWB_STATE:$awbState")
+            Log.d(TAG, "process frameNumber:${result.frameNumber}")
             when (mState) {
+                STATE_IDLE -> {
+                }
                 STATE_WAITING_LOCK -> {
                     //waiting lock 根据返回结果判断AF状态
                     if (afState == null) {
@@ -70,9 +74,15 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
                         )
                     ) {
                         //af locked 处理ae
-
-
+                        if (aeState == null) {
+                            captureStillPicture()
+                        } else if (aeState !in listOf(CaptureResult.CONTROL_AE_STATE_CONVERGED)) {
+                            runPrecaptureSequence()
+                        }
                     }
+                }
+                STATE_WAITING_AE_DONE -> {
+
                 }
             }
         }
@@ -84,17 +94,36 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
             frameNumber: Long
         ) {
             super.onCaptureStarted(session, request, timestamp, frameNumber)
-            Log.d(TAG,"capture started request:")
-            request.keys.forEach {
-                Log.d(TAG,"map:${it.toString()}->${request.get(it)?.toString()}")
-            }
+            Log.d(TAG, "capture started request:")
+//            request.keys.forEach {
+//                Log.d(TAG, "map:${it.toString()}->${request.get(it)?.toString()}")
+//            }
         }
 
-        override fun onCaptureFailed(session: CameraCaptureSession, request: CaptureRequest, failure: CaptureFailure) {
+        override fun onCaptureFailed(
+            session: CameraCaptureSession,
+            request: CaptureRequest,
+            failure: CaptureFailure
+        ) {
             super.onCaptureFailed(session, request, failure)
             Log.d(TAG, "capture failed request:${request.keys}")
         }
 
+    }
+
+    private fun runPrecaptureSequence() {
+        Log.d(TAG, "runPrecaptureSequence")
+        mRequestBuilder?.let {
+            it.set(
+                CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER,
+                CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_START
+            )
+            mState = STATE_WAITING_AE_DONE
+            mCaptureSession?.capture(
+                it.build(),
+                mCaptureCallback, mBackgroundHandler
+            )
+        }
     }
 
     private fun captureStillPicture() {
@@ -206,20 +235,25 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
                     val outputSurfaces = mutableListOf(Surface(textureView.surfaceTexture.apply {
                         setDefaultBufferSize(mLargestSize!!.width, mLargestSize!!.height)
                     }))
-                    it.createCaptureSession(outputSurfaces, object : CameraCaptureSession.StateCallback() {
-                        override fun onConfigureFailed(session: CameraCaptureSession) {
-                        }
+                    it.createCaptureSession(
+                        outputSurfaces,
+                        object : CameraCaptureSession.StateCallback() {
+                            override fun onConfigureFailed(session: CameraCaptureSession) {
+                            }
 
-                        override fun onConfigured(session: CameraCaptureSession) {
-                            mCaptureSession = session
-                            mRequestBuilder = it.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
-                            mRequestBuilder!!.addTarget(outputSurfaces[0])
-                            session.setRepeatingRequest(
-                                mRequestBuilder!!.build(),
-                                null, null
-                            )
-                        }
-                    }, mBackgroundHandler)
+                            override fun onConfigured(session: CameraCaptureSession) {
+                                mCaptureSession = session
+                                mRequestBuilder =
+                                    it.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+                                mRequestBuilder!!.addTarget(outputSurfaces[0])
+                                session.setRepeatingRequest(
+                                    mRequestBuilder!!.build(),
+                                    null, null
+                                )
+                            }
+                        },
+                        mBackgroundHandler
+                    )
                 }
             }
 
@@ -238,10 +272,12 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
             val facing = cameraCharacteristic.get(CameraCharacteristics.LENS_FACING)
             if (facing == CameraCharacteristics.LENS_FACING_BACK) {
                 mCameraId = it
-                val map = cameraCharacteristic.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+                val map =
+                    cameraCharacteristic.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
                 val size = map?.getOutputSizes(ImageFormat.JPEG)
                 mLargestSize = size?.firstOrNull()
-                mSensorOrientation = cameraCharacteristic.get(CameraCharacteristics.SENSOR_ORIENTATION)
+                mSensorOrientation =
+                    cameraCharacteristic.get(CameraCharacteristics.SENSOR_ORIENTATION)
                 val displayRotation = windowManager.defaultDisplay.rotation
                 var swappedDimensions = false
                 when (displayRotation) {
@@ -270,7 +306,11 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
                 }
                 mPreviewSize = chooseOptimalSize(
                     map!!.getOutputSizes(SurfaceTexture::class.java),
-                    rotatedPreviewWidth, rotatedPreviewHeight, maxPreviewWidth, maxPreviewHeight, mLargestSize!!
+                    rotatedPreviewWidth,
+                    rotatedPreviewHeight,
+                    maxPreviewWidth,
+                    maxPreviewHeight,
+                    mLargestSize!!
                 )
                 val orientation = resources.configuration.orientation
                 if (orientation == Configuration.ORIENTATION_LANDSCAPE) {
@@ -289,13 +329,17 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         val rotation = windowManager.defaultDisplay.rotation
         val matrix = Matrix()
         val viewRect = RectF(0.toFloat(), 0.toFloat(), width.toFloat(), height.toFloat())
-        val bufferRect = RectF(0.toFloat(), 0f, mPreviewSize!!.height.toFloat(), mPreviewSize!!.width.toFloat())
+        val bufferRect =
+            RectF(0.toFloat(), 0f, mPreviewSize!!.height.toFloat(), mPreviewSize!!.width.toFloat())
         val centerX = viewRect.centerX()
         val centerY = viewRect.centerY()
         if (Surface.ROTATION_90 == rotation || Surface.ROTATION_270 == rotation) {
             bufferRect.offset(centerX - bufferRect.centerX(), centerY - bufferRect.centerY())
             matrix.setRectToRect(viewRect, bufferRect, Matrix.ScaleToFit.FILL)
-            val scale = max(height.toFloat() / mPreviewSize!!.height, width.toFloat() / mPreviewSize!!.width)
+            val scale = max(
+                height.toFloat() / mPreviewSize!!.height,
+                width.toFloat() / mPreviewSize!!.width
+            )
             matrix.postScale(scale, scale, centerX, centerY)
             matrix.postRotate(90 * (rotation - 2).toFloat(), centerX, centerY)
         } else if (Surface.ROTATION_180 == rotation) {
