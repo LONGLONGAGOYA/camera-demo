@@ -20,6 +20,8 @@ import android.view.Surface
 import android.view.TextureView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.tbruyelle.rxpermissions2.RxPermissions
 import kotlinx.android.synthetic.main.activity_main.*
 import java.io.File
@@ -29,8 +31,8 @@ import java.util.*
 import kotlin.math.max
 import kotlin.math.sign
 
-private val SENSOR_ORIENTATION_DEFAULT_DEGREES = 90
-private val SENSOR_ORIENTATION_INVERSE_DEGREES = 270
+private const val SENSOR_ORIENTATION_DEFAULT_DEGREES = 90
+private const val SENSOR_ORIENTATION_INVERSE_DEGREES = 270
 private val DEFAULT_ORIENTATIONS = SparseIntArray().apply {
     append(Surface.ROTATION_0, 90)
     append(Surface.ROTATION_90, 0)
@@ -69,6 +71,7 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
     private var mFile: File? = null
     private var mMediaRecorder: MediaRecorder? = null
     private var mPath: String? = null
+    private var mImageSensorArea: Rect? = null
 
     private val mCaptureCallback = object : CameraCaptureSession.CaptureCallback() {
         override fun onCaptureProgressed(
@@ -77,7 +80,7 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
             partialResult: CaptureResult
         ) {
             super.onCaptureProgressed(session, request, partialResult)
-            Log.d(TAG, "partialResult:${partialResult}")
+//            Log.d(TAG, "partialResult:${partialResult}")
         }
 
         override fun onCaptureCompleted(
@@ -86,16 +89,26 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
             result: TotalCaptureResult
         ) {
             super.onCaptureCompleted(session, request, result)
-            Log.d(TAG, "totalResult:${result}")
             process(result)
+            processForFace(result)
+        }
+
+        private fun processForFace(result: TotalCaptureResult) {
+            val faces = result.get(CaptureResult.STATISTICS_FACES)
+            val scalerCropRegion = result.get(CaptureResult.SCALER_CROP_REGION)
+            faces?.forEach {
+                Log.d(TAG, "scaleCropRegion:${scalerCropRegion.toString()}")
+                Log.d(TAG, "face:${it.bounds}")
+
+            }
         }
 
         private fun process(result: CaptureResult) {
             val afState = result.get(CaptureResult.CONTROL_AF_STATE)
             val aeState = result.get(CaptureResult.CONTROL_AE_STATE)
             val awbState = result.get(CaptureResult.CONTROL_AWB_STATE)
-            Log.d(TAG, "process AF_STATE:$afState  AE_STATE:$aeState  AWB_STATE:$awbState")
-            Log.d(TAG, "process frameNumber:${result.frameNumber}")
+//            Log.d(TAG, "process AF_STATE:$afState  AE_STATE:$aeState  AWB_STATE:$awbState")
+//            Log.d(TAG, "process frameNumber:${result.frameNumber}")
             when (mState) {
                 STATE_IDLE -> {
                 }
@@ -141,10 +154,10 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
             frameNumber: Long
         ) {
             super.onCaptureStarted(session, request, timestamp, frameNumber)
-            Log.d(TAG, "**********************capture started request:")
+//            Log.d(TAG, "**********************capture started request:")
             request.keys.forEach {
-                if (it.toString().toLowerCase().contains("ae"))
-                    Log.d(TAG, "map:${it.toString()}->${request.get(it)?.toString()}")
+                //                if (it.toString().toLowerCase().contains("ae"))
+//                    Log.d(TAG, "map:${it.toString()}->${request.get(it)?.toString()}")
             }
         }
 
@@ -161,6 +174,8 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
     private var mBackgroundHandler: Handler? = null
     private var mSensorOrientation: Int? = null
     private var mPreviewSize: Size? = null
+
+    private var mPreviewSizeAdapter: PreviewSizeAdapter? = null
 
     @SuppressLint("MissingPermission")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -189,6 +204,19 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
             mIsRecording = true
             btnPicture.text = "完成录制"
             true
+        }
+        rvPreviews?.let {
+            it.layoutManager = LinearLayoutManager(this, RecyclerView.HORIZONTAL, false)
+            it.adapter = PreviewSizeAdapter(
+                this, emptyList(),
+                object : OnClickListener {
+                    override fun onSelect(size: Size) {
+
+                    }
+                }, 0
+            ).apply {
+                mPreviewSizeAdapter = this
+            }
         }
     }
 
@@ -350,7 +378,6 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
     @SuppressLint("MissingPermission")
     private fun openCamera(width: Int, height: Int) {
         setupCameraOutputs(width, height)
-        prepareVideoRecorder()
         configSurface(width, height)
         val obj = object : CameraDevice.StateCallback() {
             override fun onOpened(camera: CameraDevice) {
@@ -368,11 +395,23 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
         mCameraManager.openCamera(mCameraId!!, obj, mBackgroundHandler)
     }
 
-    private fun startPreviewSession() {
+    private fun startPreviewSession(size: Size? = null) {
+        mCaptureSession?.close()
         mCameraDevice?.let {
+            Log.d(TAG, "mPreviewSize:$mPreviewSize")
             val outputSurfaces = mutableListOf(Surface(textureView.surfaceTexture.apply {
-                setDefaultBufferSize(mPreviewSize!!.width, mPreviewSize!!.height)
+                setDefaultBufferSize(
+                    size?.height ?: mPreviewSize!!.width,
+                    size?.width ?: mPreviewSize!!.height
+                )
             }), mImageReader!!.surface)
+            Log.d(TAG, "startPreviewSession:$size")
+            size?.let {
+                textureView.setAspect(
+                    size.height,
+                    size.width
+                )
+            }
             it.createCaptureSession(
                 outputSurfaces,
                 object : CameraCaptureSession.StateCallback() {
@@ -386,6 +425,7 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
                         mRequestBuilder =
                             it.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
                         mRequestBuilder!!.addTarget(outputSurfaces[0])
+                        configFaceDetected(mRequestBuilder!!)
                         session.setRepeatingRequest(
                             mRequestBuilder!!.build(),
                             mCaptureCallback, mBackgroundHandler
@@ -403,10 +443,14 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
             val facing = cameraCharacteristic.get(CameraCharacteristics.LENS_FACING)
             if (facing == CameraCharacteristics.LENS_FACING_BACK) {
                 mCameraId = it
+                mImageSensorArea =
+                    cameraCharacteristic.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+                Log.d(TAG, "mImageSensorArea:${mImageSensorArea.toString()}")
                 val map =
                     cameraCharacteristic.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
                 val size = map?.getOutputSizes(ImageFormat.JPEG)
                 mLargestSize = size?.firstOrNull()
+                Log.d(TAG, "mLargestSize:${mLargestSize.toString()}")
                 mImageReader = ImageReader.newInstance(
                     mLargestSize!!.width,
                     mLargestSize!!.height, ImageFormat.JPEG, 2
@@ -447,7 +491,17 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
                     maxPreviewHeight = displaySize.x
                 }
                 mPreviewSize = chooseOptimalSize(
-                    map!!.getOutputSizes(SurfaceTexture::class.java),
+                    map!!.getOutputSizes(SurfaceTexture::class.java).apply {
+                        mPreviewSizeAdapter?.let {
+                            it.data = this.toList()
+                            it.notifyDataSetChanged()
+                            it.onSelect = object : OnClickListener {
+                                override fun onSelect(size: Size) {
+                                    startPreviewSession(size)
+                                }
+                            }
+                        }
+                    },
                     rotatedPreviewWidth,
                     rotatedPreviewHeight,
                     maxPreviewWidth,
@@ -625,6 +679,13 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
             Surface.ROTATION_180 -> Surface.ROTATION_270
             else -> 2
         } + mSensorOrientation!! + 270) % 360
+    }
+
+    private fun configFaceDetected(request: CaptureRequest.Builder) {
+        request.set(
+            CaptureRequest.STATISTICS_FACE_DETECT_MODE,
+            CaptureRequest.STATISTICS_FACE_DETECT_MODE_FULL
+        )
     }
 
 }
