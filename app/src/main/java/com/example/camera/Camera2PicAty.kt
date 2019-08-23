@@ -6,19 +6,43 @@ import android.app.Service
 import android.content.res.Configuration
 import android.graphics.*
 import android.hardware.camera2.*
+import android.media.Image
+import android.media.ImageReader
+import android.media.MediaRecorder
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
 import android.util.Size
+import android.util.SparseIntArray
 import android.view.Surface
 import android.view.TextureView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.tbruyelle.rxpermissions2.RxPermissions
 import kotlinx.android.synthetic.main.activity_main.*
+import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
 import java.util.*
 import kotlin.math.max
 import kotlin.math.sign
+
+private val SENSOR_ORIENTATION_DEFAULT_DEGREES = 90
+private val SENSOR_ORIENTATION_INVERSE_DEGREES = 270
+private val DEFAULT_ORIENTATIONS = SparseIntArray().apply {
+    append(Surface.ROTATION_0, 90)
+    append(Surface.ROTATION_90, 0)
+    append(Surface.ROTATION_180, 270)
+    append(Surface.ROTATION_270, 180)
+}
+private val INVERSE_ORIENTATIONS = SparseIntArray().apply {
+    append(Surface.ROTATION_0, 270)
+    append(Surface.ROTATION_90, 180)
+    append(Surface.ROTATION_180, 90)
+    append(Surface.ROTATION_270, 0)
+}
 
 
 class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
@@ -26,16 +50,26 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
         const val TAG = "Camera2PicAty"
         private const val STATE_IDLE = 0
         private const val STATE_WAITING_LOCK = 1
-        private const val STATE_WAITING_AE_DONE = 2
+        private const val STATE_WAITING_AE_PRECAPTURE = 2
+        private const val STATE_WAITING_AE_NO_PRECAPTURE = 3
+        private const val STATE_PICTURE_TAKEN = 4
     }
 
     private lateinit var mCameraManager: CameraManager
     var mCameraDevice: CameraDevice? = null
     private var mCaptureSession: CameraCaptureSession? = null
+    private var mRecordVideoSession: CameraCaptureSession? = null
     var mLargestSize: Size? = null
     private var mCameraId: String? = null
     private var mRequestBuilder: CaptureRequest.Builder? = null
     private var mState = STATE_IDLE
+    private var mIsRecording = false
+
+    private var mImageReader: ImageReader? = null
+    private var mFile: File? = null
+    private var mMediaRecorder: MediaRecorder? = null
+    private var mPath: String? = null
+
     private val mCaptureCallback = object : CameraCaptureSession.CaptureCallback() {
         override fun onCaptureProgressed(
             session: CameraCaptureSession,
@@ -43,7 +77,7 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
             partialResult: CaptureResult
         ) {
             super.onCaptureProgressed(session, request, partialResult)
-//            process(partialResult)
+            Log.d(TAG, "partialResult:${partialResult}")
         }
 
         override fun onCaptureCompleted(
@@ -52,6 +86,7 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
             result: TotalCaptureResult
         ) {
             super.onCaptureCompleted(session, request, result)
+            Log.d(TAG, "totalResult:${result}")
             process(result)
         }
 
@@ -81,8 +116,20 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
                         }
                     }
                 }
-                STATE_WAITING_AE_DONE -> {
-
+                STATE_WAITING_AE_PRECAPTURE -> {
+                    // CONTROL_AE_STATE can be null on some devices
+                    if (aeState == null ||
+                        aeState == CaptureResult.CONTROL_AE_STATE_PRECAPTURE ||
+                        aeState == CaptureRequest.CONTROL_AE_STATE_FLASH_REQUIRED
+                    ) {
+                        mState = STATE_WAITING_AE_NO_PRECAPTURE
+                    }
+                }
+                STATE_WAITING_AE_NO_PRECAPTURE -> {
+                    if (aeState == null || aeState != CaptureResult.CONTROL_AE_STATE_PRECAPTURE) {
+                        mState = STATE_PICTURE_TAKEN
+                        captureStillPicture()
+                    }
                 }
             }
         }
@@ -94,10 +141,11 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
             frameNumber: Long
         ) {
             super.onCaptureStarted(session, request, timestamp, frameNumber)
-            Log.d(TAG, "capture started request:")
-//            request.keys.forEach {
-//                Log.d(TAG, "map:${it.toString()}->${request.get(it)?.toString()}")
-//            }
+            Log.d(TAG, "**********************capture started request:")
+            request.keys.forEach {
+                if (it.toString().toLowerCase().contains("ae"))
+                    Log.d(TAG, "map:${it.toString()}->${request.get(it)?.toString()}")
+            }
         }
 
         override fun onCaptureFailed(
@@ -110,27 +158,7 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
         }
 
     }
-
-    private fun runPrecaptureSequence() {
-        Log.d(TAG, "runPrecaptureSequence")
-        mRequestBuilder?.let {
-            it.set(
-                CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER,
-                CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_START
-            )
-            mState = STATE_WAITING_AE_DONE
-            mCaptureSession?.capture(
-                it.build(),
-                mCaptureCallback, mBackgroundHandler
-            )
-        }
-    }
-
-    private fun captureStillPicture() {
-
-    }
-
-    var mBackgroundHandler: Handler? = null
+    private var mBackgroundHandler: Handler? = null
     private var mSensorOrientation: Int? = null
     private var mPreviewSize: Size? = null
 
@@ -150,7 +178,17 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
             }
         }
         btnPicture.setOnClickListener {
-            takePicture()
+            if (mIsRecording) {
+                finishRecord()
+            } else {
+                takePicture()
+            }
+        }
+        btnPicture.setOnLongClickListener {
+            recordVideo()
+            mIsRecording = true
+            btnPicture.text = "完成录制"
+            true
         }
     }
 
@@ -189,15 +227,92 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
         openCamera(textureView.width, textureView.height)
     }
 
-
     private fun takePicture() {
+
         //first lock focus
         mRequestBuilder?.let {
             it.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_START)
             mState = STATE_WAITING_LOCK
             mCaptureSession?.capture(it.build(), mCaptureCallback, mBackgroundHandler)
-            Log.d(TAG, "takePicture")
         }
+    }
+
+    private fun recordVideo() {
+        mCaptureSession?.close()
+        prepareVideoRecorder()
+        mCameraDevice!!.createCaptureSession(
+            mutableListOf(Surface(textureView.surfaceTexture.apply {
+                setDefaultBufferSize(mPreviewSize!!.width, mPreviewSize!!.height)
+            }), mMediaRecorder!!.surface), object :
+                CameraCaptureSession.StateCallback() {
+                override fun onConfigureFailed(session: CameraCaptureSession) {
+
+                }
+
+                override fun onConfigured(session: CameraCaptureSession) {
+                    mRecordVideoSession = session
+                    mRecordVideoSession?.let {
+                        val request = mCameraDevice!!.createCaptureRequest(
+                            CameraDevice.TEMPLATE_RECORD
+                        )
+                        request.apply {
+                            addTarget(Surface(textureView.surfaceTexture))
+                            addTarget(mMediaRecorder!!.surface)
+                        }
+                        it.setRepeatingRequest(request.build(), null, null)
+                        mMediaRecorder?.start()
+                    }
+                }
+
+            }, mBackgroundHandler
+        )
+    }
+
+    private fun finishRecord() {
+        mMediaRecorder?.stop()
+        mMediaRecorder?.reset()
+        mIsRecording = false
+        btnPicture.text = "点击拍照（长按录制）"
+
+        mRecordVideoSession?.close()
+        startPreviewSession()
+    }
+
+    private fun prepareVideoRecorder(): Boolean {
+        releaseMediaRecorder()
+        mMediaRecorder = MediaRecorder()
+        mMediaRecorder?.let { mMediaRecorder ->
+            mMediaRecorder.setAudioSource(MediaRecorder.AudioSource.MIC)
+            mMediaRecorder.setVideoSource(MediaRecorder.VideoSource.SURFACE)
+            mMediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            mPath = mPath ?: File(
+                Environment.getExternalStorageDirectory(), "b_video_${System.currentTimeMillis()
+                }.mp4"
+            ).path
+            mMediaRecorder.setOutputFile(mPath)
+            mMediaRecorder.setVideoEncodingBitRate(10000000)
+            mMediaRecorder.setVideoFrameRate(30)
+            mMediaRecorder.setVideoSize(mPreviewSize!!.width, mPreviewSize!!.height)
+            mMediaRecorder.setVideoEncoder(MediaRecorder.VideoEncoder.H264)
+            mMediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            val rotation = windowManager.defaultDisplay.rotation
+            when (mSensorOrientation) {
+                SENSOR_ORIENTATION_DEFAULT_DEGREES -> mMediaRecorder.setOrientationHint(
+                    DEFAULT_ORIENTATIONS.get(rotation)
+                )
+                SENSOR_ORIENTATION_INVERSE_DEGREES -> mMediaRecorder.setOrientationHint(
+                    INVERSE_ORIENTATIONS.get(rotation)
+                )
+            }
+            mMediaRecorder.prepare()
+        }
+        return false
+    }
+
+    private fun releaseMediaRecorder() {
+        mMediaRecorder?.reset()
+        mMediaRecorder?.release()
+        mMediaRecorder = null
     }
 
     private fun createHandler() {
@@ -220,50 +335,66 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
     }
 
     private fun closeCamera() {
-        mCaptureSession?.close()
-        mCameraDevice?.close()
+        try {
+            mCaptureSession?.close()
+            mCaptureSession = null
+            mCameraDevice?.close()
+            mCameraDevice = null
+            mImageReader?.close()
+            mImageReader = null
+        } catch (e: InterruptedException) {
+            throw RuntimeException("Interrupted while trying to lock camera closing.", e)
+        }
     }
 
     @SuppressLint("MissingPermission")
     private fun openCamera(width: Int, height: Int) {
         setupCameraOutputs(width, height)
+        prepareVideoRecorder()
         configSurface(width, height)
         val obj = object : CameraDevice.StateCallback() {
             override fun onOpened(camera: CameraDevice) {
                 mCameraDevice = camera
-                mCameraDevice?.let {
-                    val outputSurfaces = mutableListOf(Surface(textureView.surfaceTexture.apply {
-                        setDefaultBufferSize(mLargestSize!!.width, mLargestSize!!.height)
-                    }))
-                    it.createCaptureSession(
-                        outputSurfaces,
-                        object : CameraCaptureSession.StateCallback() {
-                            override fun onConfigureFailed(session: CameraCaptureSession) {
-                            }
-
-                            override fun onConfigured(session: CameraCaptureSession) {
-                                mCaptureSession = session
-                                mRequestBuilder =
-                                    it.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
-                                mRequestBuilder!!.addTarget(outputSurfaces[0])
-                                session.setRepeatingRequest(
-                                    mRequestBuilder!!.build(),
-                                    null, null
-                                )
-                            }
-                        },
-                        mBackgroundHandler
-                    )
-                }
+                startPreviewSession()
             }
 
             override fun onDisconnected(camera: CameraDevice) {
             }
 
             override fun onError(camera: CameraDevice, error: Int) {
+                Log.d(TAG, "error:$error ")
             }
         }
         mCameraManager.openCamera(mCameraId!!, obj, mBackgroundHandler)
+    }
+
+    private fun startPreviewSession() {
+        mCameraDevice?.let {
+            val outputSurfaces = mutableListOf(Surface(textureView.surfaceTexture.apply {
+                setDefaultBufferSize(mPreviewSize!!.width, mPreviewSize!!.height)
+            }), mImageReader!!.surface)
+            it.createCaptureSession(
+                outputSurfaces,
+                object : CameraCaptureSession.StateCallback() {
+                    override fun onConfigureFailed(session: CameraCaptureSession) {
+                        Log.e(TAG, "configSessionFailed $session")
+                    }
+
+                    override fun onConfigured(session: CameraCaptureSession) {
+                        mCaptureSession = session
+                        //根据镜头初始化一个合适的requestBuilder
+                        mRequestBuilder =
+                            it.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+                        mRequestBuilder!!.addTarget(outputSurfaces[0])
+                        session.setRepeatingRequest(
+                            mRequestBuilder!!.build(),
+                            mCaptureCallback, mBackgroundHandler
+                        )
+                    }
+                },
+                mBackgroundHandler
+            )
+        }
     }
 
     private fun setupCameraOutputs(width: Int, height: Int) {
@@ -276,6 +407,17 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
                     cameraCharacteristic.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
                 val size = map?.getOutputSizes(ImageFormat.JPEG)
                 mLargestSize = size?.firstOrNull()
+                mImageReader = ImageReader.newInstance(
+                    mLargestSize!!.width,
+                    mLargestSize!!.height, ImageFormat.JPEG, 2
+                )
+                mFile = File(
+                    Environment.getExternalStorageDirectory(),
+                    "a_demo${System.currentTimeMillis()}.jpg"
+                )
+                mImageReader!!.setOnImageAvailableListener({
+                    mBackgroundHandler?.post(ImageSaver(it.acquireNextImage(), mFile!!))
+                }, mBackgroundHandler)
                 mSensorOrientation =
                     cameraCharacteristic.get(CameraCharacteristics.SENSOR_ORIENTATION)
                 val displayRotation = windowManager.defaultDisplay.rotation
@@ -383,7 +525,150 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
         }
     }
 
+
+    private fun runPrecaptureSequence() {
+        Log.d(TAG, "runPrecaptureSequence")
+        mRequestBuilder?.let {
+            it.set(
+                CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER,
+                CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_START
+            )
+            mState = STATE_WAITING_AE_PRECAPTURE
+            mCaptureSession?.capture(
+                it.build(),
+                mCaptureCallback, mBackgroundHandler
+            )
+        }
+    }
+
+    private fun captureStillPicture() {
+        try {
+            // This is the CaptureRequest.Builder that we use to take a picture.
+            val captureBuilder =
+                mCameraDevice!!.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)
+            captureBuilder.addTarget(mImageReader!!.surface)
+
+            // Use the same AE and AF modes as the preview.
+            captureBuilder.set(
+                CaptureRequest.CONTROL_AF_MODE,
+                CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
+            )
+
+            // Orientation
+            val rotation = windowManager.defaultDisplay.rotation
+            Log.d(TAG, "captureStillPicture: rotation:$rotation")
+            captureBuilder.set(CaptureRequest.JPEG_ORIENTATION, getOrientation(rotation))
+
+            val captureCallback = object : CameraCaptureSession.CaptureCallback() {
+
+                override fun onCaptureCompleted(
+                    session: CameraCaptureSession,
+                    request: CaptureRequest,
+                    result: TotalCaptureResult
+                ) {
+                    Toast.makeText(this@Camera2PicAty, "Saved: $mFile", Toast.LENGTH_SHORT).show()
+                    Log.d(TAG, "captureStillPicture: saved")
+                    unlockFocus()
+                }
+            }
+
+            mCaptureSession!!.stopRepeating()
+            mCaptureSession!!.abortCaptures()
+            mCaptureSession!!.capture(captureBuilder.build(), captureCallback, null)
+        } catch (e: CameraAccessException) {
+            e.printStackTrace()
+        }
+
+    }
+
+    private fun unlockFocus() {
+        try {
+            // Reset the auto-focus trigger
+            mRequestBuilder?.set(
+                CaptureRequest.CONTROL_AF_TRIGGER,
+                CameraMetadata.CONTROL_AF_TRIGGER_CANCEL
+            )
+            mCaptureSession?.capture(
+                mRequestBuilder!!.build(), mCaptureCallback,
+                mBackgroundHandler
+            )
+            // After this, the camera will go back to the normal state of preview.
+            mState = STATE_IDLE
+            mCaptureSession?.setRepeatingRequest(
+                mCameraDevice!!.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+                    addTarget(Surface(textureView.surfaceTexture))
+                }.build(),
+                mCaptureCallback,
+                mBackgroundHandler
+            )
+        } catch (e: CameraAccessException) {
+            e.printStackTrace()
+        }
+
+    }
+
+    /**
+     * Retrieves the JPEG orientation from the specified screen rotation.
+     *
+     * @param rotation The screen rotation.
+     * @return The JPEG orientation (one of 0, 90, 270, and 360)
+     */
+    private fun getOrientation(rotation: Int): Int {
+        // Sensor orientation is 90 for most devices, or 270 for some devices (eg. Nexus 5X)
+        // We have to take that into account and rotate JPEG properly.
+        // For devices with orientation of 90, we simply return our mapping from ORIENTATIONS.
+        // For devices with orientation of 270, we need to rotate the JPEG 180 degrees.
+        return (when (rotation) {
+            Surface.ROTATION_0 -> Surface.ROTATION_90
+            Surface.ROTATION_90 -> Surface.ROTATION_0
+            Surface.ROTATION_270 -> Surface.ROTATION_180
+            Surface.ROTATION_180 -> Surface.ROTATION_270
+            else -> 2
+        } + mSensorOrientation!! + 270) % 360
+    }
+
 }
+
+
+/**
+ * Saves a JPEG [Image] into the specified [File].
+ */
+private class ImageSaver internal constructor(
+    /**
+     * The JPEG image
+     */
+    private val mImage: Image,
+    /**
+     * The file we save the image into.
+     */
+    private val mFile: File
+) : Runnable {
+
+    override fun run() {
+        val buffer = mImage.planes[0].buffer
+        val bytes = ByteArray(buffer.remaining())
+        buffer.get(bytes)
+        var output: FileOutputStream? = null
+        try {
+            output = FileOutputStream(mFile)
+            output.write(bytes)
+        } catch (e: IOException) {
+            e.printStackTrace()
+        } finally {
+            mImage.close()
+            if (null != output) {
+                try {
+                    output.close()
+                } catch (e: IOException) {
+                    e.printStackTrace()
+                }
+
+            }
+        }
+    }
+
+}
+
 
 /**
  * Compares two `Size`s based on their areas.

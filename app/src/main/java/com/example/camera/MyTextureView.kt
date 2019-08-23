@@ -16,11 +16,10 @@ class MyTextureView @JvmOverloads constructor(
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)
         val width = measuredWidth
         val height = measuredHeight
-        Log.d("MyTextureView","onMeasure width:$width  height:$height")
-        setMeasuredDimension(width/2, (width.toFloat()/2 * mAspectHeight / mAspectWidth).toInt())
+        setMeasuredDimension(width, (width.toFloat() * mAspectHeight / mAspectWidth).toInt())
     }
 
-    public fun setAspect(width: Int, height: Int) {
+    fun setAspect(width: Int, height: Int) {
         mAspectWidth = width
         mAspectHeight = height
         requestLayout()
