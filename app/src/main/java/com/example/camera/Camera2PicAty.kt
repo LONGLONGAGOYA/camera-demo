@@ -174,6 +174,7 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
     private var mBackgroundHandler: Handler? = null
     private var mSensorOrientation: Int? = null
     private var mPreviewSize: Size? = null
+    private var mChoicePreviewSize: Size? = null
 
     private var mPreviewSizeAdapter: PreviewSizeAdapter? = null
 
@@ -209,11 +210,7 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
             it.layoutManager = LinearLayoutManager(this, RecyclerView.HORIZONTAL, false)
             it.adapter = PreviewSizeAdapter(
                 this, emptyList(),
-                object : OnClickListener {
-                    override fun onSelect(size: Size) {
-
-                    }
-                }, 0
+                null, 0
             ).apply {
                 mPreviewSizeAdapter = this
             }
@@ -399,12 +396,15 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
         mCaptureSession?.close()
         mCameraDevice?.let {
             Log.d(TAG, "mPreviewSize:$mPreviewSize")
-            val outputSurfaces = mutableListOf(Surface(textureView.surfaceTexture.apply {
-                setDefaultBufferSize(
-                    size?.height ?: mPreviewSize!!.width,
-                    size?.width ?: mPreviewSize!!.height
-                )
-            }), mImageReader!!.surface)
+            val outputSurfaces = mutableListOf(
+                Surface(textureView.surfaceTexture.apply {
+                    setDefaultBufferSize(
+                        size?.height ?: mPreviewSize!!.width,
+                        size?.width ?: mPreviewSize!!.height
+                    )
+                })
+                , mImageReader!!.surface
+            )
             Log.d(TAG, "startPreviewSession:$size")
             size?.let {
                 textureView.setAspect(
@@ -451,9 +451,14 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
                 val size = map?.getOutputSizes(ImageFormat.JPEG)
                 mLargestSize = size?.firstOrNull()
                 Log.d(TAG, "mLargestSize:${mLargestSize.toString()}")
+                mLargestSize = chooseOptimalSize(
+                    map!!.getOutputSizes(ImageFormat.JPEG),
+                    0, 0, Integer.MAX_VALUE, Integer.MAX_VALUE, mChoicePreviewSize ?: mLargestSize!!
+                )
                 mImageReader = ImageReader.newInstance(
                     mLargestSize!!.width,
-                    mLargestSize!!.height, ImageFormat.JPEG, 2
+                    mLargestSize!!.height,
+                    ImageFormat.JPEG, 2
                 )
                 mFile = File(
                     Environment.getExternalStorageDirectory(),
@@ -497,7 +502,9 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
                             it.notifyDataSetChanged()
                             it.onSelect = object : OnClickListener {
                                 override fun onSelect(size: Size) {
-                                    startPreviewSession(size)
+                                    mChoicePreviewSize = size
+                                    closeCamera()
+                                    openCamera(size.height, size.width)
                                 }
                             }
                         }
@@ -506,8 +513,9 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
                     rotatedPreviewHeight,
                     maxPreviewWidth,
                     maxPreviewHeight,
-                    mLargestSize!!
+                    mChoicePreviewSize ?: mLargestSize!!
                 )
+                mPreviewSize = mChoicePreviewSize ?: mLargestSize
                 val orientation = resources.configuration.orientation
                 if (orientation == Configuration.ORIENTATION_LANDSCAPE) {
                     textureView.setAspect(mPreviewSize!!.width, mPreviewSize!!.height)

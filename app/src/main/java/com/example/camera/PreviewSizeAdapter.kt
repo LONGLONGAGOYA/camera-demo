@@ -13,7 +13,7 @@ import kotlinx.android.synthetic.main.item_preview_size.view.*
 class PreviewSizeAdapter(
     val context: Context,
     var data: List<Size>,
-    var onSelect: OnClickListener,
+    var onSelect: OnClickListener?,
     val defaultSelect: Int = 0
 ) :
     RecyclerView.Adapter<RecyclerView.ViewHolder>() {
@@ -41,7 +41,7 @@ class PreviewSizeAdapter(
                     if (mSelectedIndex != position) {
                         mSelectedIndex = position
                         notifyDataSetChanged()
-                        onSelect.onSelect(size)
+                        onSelect?.onSelect(size)
                     }
                 }
             }, position == mSelectedIndex)
