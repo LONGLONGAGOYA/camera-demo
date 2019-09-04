@@ -234,7 +234,7 @@ class Camera1PicAty : Activity() {
             val param = it.parameters
             val maxNum = param.maxNumMeteringAreas
             if (maxNum > 0) {
-                param.meteringAreas.apply {
+                param.meteringAreas?.apply {
                     val r1 = Rect(-1000, -1000, -500, -500)
                     add(Camera.Area(r1, 60))
                     param.meteringAreas = this

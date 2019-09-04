@@ -1,6 +1,5 @@
 package com.example.camera
 
-import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Service
 import android.content.res.Configuration
@@ -22,7 +21,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.tbruyelle.rxpermissions2.RxPermissions
+import com.example.camera.util.convertFace2ViewRect
 import kotlinx.android.synthetic.main.activity_main.*
 import java.io.File
 import java.io.FileOutputStream
@@ -73,6 +72,13 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
     private var mPath: String? = null
     private var mImageSensorArea: Rect? = null
 
+    private var mBackgroundHandler: Handler? = null
+    private var mSensorOrientation: Int? = null
+    private var mPreviewSize: Size? = null
+    private var mChoicePreviewSize: Size? = null
+
+    private var mPreviewSizeAdapter: PreviewSizeAdapter? = null
+
     private val mCaptureCallback = object : CameraCaptureSession.CaptureCallback() {
         override fun onCaptureProgressed(
             session: CameraCaptureSession,
@@ -98,9 +104,21 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
             val scalerCropRegion = result.get(CaptureResult.SCALER_CROP_REGION)
             faces?.forEach {
                 Log.d(TAG, "scaleCropRegion:${scalerCropRegion.toString()}")
+
                 Log.d(TAG, "face:${it.bounds}")
 
             }
+            faces?.let {
+                showView.setFaceAreas(it.map {
+                    convertFace2ViewRect(
+                        mPreviewSize!!, mImageSensorArea!!, it.bounds, Size(
+                            textureView.width,
+                            textureView.height
+                        )
+                    )
+                })
+            }
+
         }
 
         private fun process(result: CaptureResult) {
@@ -171,28 +189,14 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
         }
 
     }
-    private var mBackgroundHandler: Handler? = null
-    private var mSensorOrientation: Int? = null
-    private var mPreviewSize: Size? = null
-    private var mChoicePreviewSize: Size? = null
 
-    private var mPreviewSizeAdapter: PreviewSizeAdapter? = null
 
     @SuppressLint("MissingPermission")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-        createHandler()
-        RxPermissions(this).request(
-            Manifest.permission.WRITE_EXTERNAL_STORAGE,
-            Manifest.permission.CAMERA
-        ).subscribe {
-            if (it) {
-                mCameraManager = getSystemService(Service.CAMERA_SERVICE) as CameraManager
-            } else {
-                finish()
-            }
-        }
+        mCameraManager = getSystemService(Service.CAMERA_SERVICE) as CameraManager
+
         btnPicture.setOnClickListener {
             if (mIsRecording) {
                 finishRecord()
@@ -253,7 +257,6 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
     }
 
     private fun takePicture() {
-
         //first lock focus
         mRequestBuilder?.let {
             it.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_START)
@@ -438,23 +441,36 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
     }
 
     private fun setupCameraOutputs(width: Int, height: Int) {
+        Log.d(TAG, "setupCameraOutputs width:${width}  height:${height}")
         mCameraManager.cameraIdList.forEach {
             val cameraCharacteristic = mCameraManager.getCameraCharacteristics(it)
             val facing = cameraCharacteristic.get(CameraCharacteristics.LENS_FACING)
             if (facing == CameraCharacteristics.LENS_FACING_BACK) {
                 mCameraId = it
+                val pixelSize =
+                    cameraCharacteristic.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)
+                Log.d(TAG, "mPixelArraySize:${pixelSize?.toString()}")
                 mImageSensorArea =
                     cameraCharacteristic.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
                 Log.d(TAG, "mImageSensorArea:${mImageSensorArea.toString()}")
                 val map =
                     cameraCharacteristic.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+                Log.d(
+                    TAG, "support formats:${Arrays.toString(map.outputFormats)}"
+                )
                 val size = map?.getOutputSizes(ImageFormat.JPEG)
+                Log.d(TAG, "JPEG outputSizes:${Arrays.toString(size)}")
                 mLargestSize = size?.firstOrNull()
                 Log.d(TAG, "mLargestSize:${mLargestSize.toString()}")
                 mLargestSize = chooseOptimalSize(
                     map!!.getOutputSizes(ImageFormat.JPEG),
-                    0, 0, Integer.MAX_VALUE, Integer.MAX_VALUE, mChoicePreviewSize ?: mLargestSize!!
+                    width,
+                    height,
+                    Integer.MAX_VALUE,
+                    Integer.MAX_VALUE,
+                    mChoicePreviewSize ?: mLargestSize!!
                 )
+                mImageReader?.close()
                 mImageReader = ImageReader.newInstance(
                     mLargestSize!!.width,
                     mLargestSize!!.height,
@@ -469,7 +485,9 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
                 }, mBackgroundHandler)
                 mSensorOrientation =
                     cameraCharacteristic.get(CameraCharacteristics.SENSOR_ORIENTATION)
+                Log.d(TAG, "sensorOrientation:${mSensorOrientation}")
                 val displayRotation = windowManager.defaultDisplay.rotation
+                Log.d(TAG, "displayRotation:${displayRotation}")
                 var swappedDimensions = false
                 when (displayRotation) {
                     Surface.ROTATION_0, Surface.ROTATION_180 -> {
@@ -485,6 +503,7 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
                 }
                 val displaySize = Point()
                 windowManager.defaultDisplay.getSize(displaySize)
+                Log.d(TAG, "window defaultDisplay size:${displaySize.toString()}")
                 var rotatedPreviewWidth = width
                 var rotatedPreviewHeight = height
                 var maxPreviewWidth = displaySize.x
@@ -496,7 +515,7 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
                     maxPreviewHeight = displaySize.x
                 }
                 mPreviewSize = chooseOptimalSize(
-                    map!!.getOutputSizes(SurfaceTexture::class.java).apply {
+                    map.getOutputSizes(SurfaceTexture::class.java).apply {
                         mPreviewSizeAdapter?.let {
                             it.data = this.toList()
                             it.notifyDataSetChanged()
@@ -515,7 +534,7 @@ class Camera2PicAty : AppCompatActivity(), TextureView.SurfaceTextureListener {
                     maxPreviewHeight,
                     mChoicePreviewSize ?: mLargestSize!!
                 )
-                mPreviewSize = mChoicePreviewSize ?: mLargestSize
+                mPreviewSize = mChoicePreviewSize ?: mPreviewSize
                 val orientation = resources.configuration.orientation
                 if (orientation == Configuration.ORIENTATION_LANDSCAPE) {
                     textureView.setAspect(mPreviewSize!!.width, mPreviewSize!!.height)

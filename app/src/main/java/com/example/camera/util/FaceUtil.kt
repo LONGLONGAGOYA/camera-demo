@@ -4,6 +4,7 @@ import android.graphics.Matrix
 import android.graphics.Rect
 import android.graphics.RectF
 import android.util.Log
+import android.util.Size
 import com.example.camera.TAG
 
 class FaceHelper(
@@ -86,4 +87,27 @@ class FaceHelper(
     }
 
 
+}
+
+
+fun convertFace2ViewRect(previewSize: Size, sensorActiveRect: Rect, faceRect: Rect,showViewSize:Size): Rect {
+    Log.d(
+        "FaceUtil", "convertFace2ViewRect:  previewSize:${previewSize.toString()}," +
+                " sensorActiveRect:${sensorActiveRect}    faceRect:$faceRect"
+    )
+    val sample = sensorActiveRect.width().toFloat() / showViewSize.height
+    val cropSize = Size(
+        sensorActiveRect.width(),
+        (sensorActiveRect.width().toFloat() * previewSize.height / previewSize.width).toInt()
+    )
+    val ret = Rect()
+    ret.left = (sensorActiveRect.bottom - (sensorActiveRect.height() - cropSize.height) / 2) - faceRect.bottom
+    ret.top = faceRect.left - sensorActiveRect.left
+    ret.right = ret.left + faceRect.height()
+    ret.bottom = ret.top + faceRect.width()
+    ret.left = (ret.left/sample).toInt()
+    ret.top = (ret.top/sample).toInt()
+    ret.right = (ret.right/sample).toInt()
+    ret.bottom = (ret.bottom/sample).toInt()
+    return ret
 }
